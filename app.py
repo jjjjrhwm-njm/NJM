@@ -5,31 +5,20 @@ import os
 
 app = Flask(__name__)
 
-# --- [ إعدادات نجم الإبداع ] ---
-# المفتاح محمي في إعدادات رندر كما فعلنا سابقاً
+# --- [ إعدادات نجم الإبداع الآمنة ] ---
+# جلب المفتاح من إعدادات رندر (السطر الواحد)
 GEMINI_KEY = os.getenv("GEMINI_API_KEY") 
 INSTANCE_ID = "159896"
 ULTRA_TOKEN = "3a2kuk39wf15ejiu"
 
 genai.configure(api_key=GEMINI_KEY)
 
-# تحديد شخصية البوت الجديدة (رسمي، بلسان راشد، يمنع الحديث التقني)
-instructions = (
-    "أنت مساعد 'نجم الإبداع'. يجب أن تكون ردودك رسمية، مهذبة، ووقورة. "
-    "تحدث بلسان صاحب الحساب (راشد علي محسن صالح) وكأنك هو تماماً. "
-    "يُمنع منعاً باتاً الحديث عن البرمجة، الأكواد، رندر، أو أي تفاصيل تقنية؛ "
-    "أجب فقط على محتوى سؤال السائل بأسلوب اجتماعي رسمي. "
-    "إذا سألك أحد 'من أنت؟' أو 'من معي؟'، أجب حصراً وباعتزاز: 'أنا مساعد نجم الإبداع'."
-)
-
-model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash',
-    system_instruction=instructions
-)
+# استخدام الموديل الجديد الذي اخترته
+model = genai.GenerativeModel('gemini-3-flash-preview')
 
 @app.route('/')
 def home():
-    return "<h1>NJM Bot is running in Official Mode ✅</h1>", 200
+    return "<h1>سيرفر NJM يعمل بموديل Gemini 3 Flash ✅</h1>", 200
 
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
@@ -38,16 +27,22 @@ def whatsapp_webhook():
         msg_body = data['data'].get('body')
         sender_id = data['data'].get('from')
         
+        # التأكد من أن الرسالة ليست مرسلة مني وتحتوي على نص
         if not data['data'].get('fromMe') and msg_body:
+            print(f"📩 رسالة جديدة من {sender_id}: {msg_body}")
             try:
-                # توليد الرد بناءً على الشخصية الرسمية الجديدة
-                res = model.generate_content(msg_body)
+                # توليد الرد بلهجة سعودية
+                res = model.generate_content(f"رد بلهجة سعودية تقنية: {msg_body}")
                 
                 # إرسال للواتساب عبر UltraMsg
                 url = f"https://api.ultramsg.com/instance{INSTANCE_ID}/messages/chat"
-                requests.post(url, data={"token": ULTRA_TOKEN, "to": sender_id, "body": res.text})
+                payload = {"token": ULTRA_TOKEN, "to": sender_id, "body": res.text}
+                
+                requests.post(url, data=payload)
+                print(f"✅ تم الرد بسرعة الفلاش")
             except Exception as e:
-                print(f"Error: {e}")
+                # طباعة الخطأ في السجلات لمتابعته
+                print(f"❌ خطأ: {e}")
                 
     return "OK", 200
 
