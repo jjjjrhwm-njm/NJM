@@ -5,18 +5,18 @@ import os
 
 app = Flask(__name__)
 
-# إعدادات نجم الإبداع
+# إعدادات نجم الإبداع المحدثة
 GEMINI_KEY = "AIzaSyD9W4yP9Lb_PIxZr6JutAQehm-4kB1v4RA"
 INSTANCE_ID = "159896"
 ULTRA_TOKEN = "3a2kuk39wf15ejiu"
 
-# إعداد المحرك (استخدام الاسم الأساسي لحل خطأ 404)
+# استخدام الاسم التقني الدقيق الذي وجدته في الموقع
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-3-pro-preview')
 
 @app.route('/')
 def home():
-    return "OK", 200
+    return "<h1>سيرفر NJMwats يعمل بموديل Gemini 3 ✅</h1>", 200
 
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
@@ -26,16 +26,19 @@ def whatsapp_webhook():
         sender_id = data['data'].get('from')
         
         if not data['data'].get('fromMe') and msg_body:
+            print(f"📩 رسالة مستلمة: {msg_body}")
             try:
-                # توليد الرد
+                # توليد الرد بالموديل الجديد
                 res = model.generate_content(f"رد بلهجة سعودية: {msg_body}")
                 
-                # إرسال للواتساب
+                # إرسال للواتساب عبر UltraMsg
                 url = f"https://api.ultramsg.com/instance{INSTANCE_ID}/messages/chat"
-                requests.post(url, data={"token": ULTRA_TOKEN, "to": sender_id, "body": res.text})
-                print(f"✅ تم الرد بنجاح")
+                payload = {"token": ULTRA_TOKEN, "to": sender_id, "body": res.text}
+                
+                requests.post(url, data=payload)
+                print(f"✅ تم الرد بنجاح بموديل Gemini 3")
             except Exception as e:
-                print(f"❌ خطأ جيمني: {e}")
+                print(f"❌ خطأ: {e}")
                 
     return "OK", 200
 
