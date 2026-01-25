@@ -6,18 +6,19 @@ import os
 app = Flask(__name__)
 
 # --- [ إعدادات نجم الإبداع الآمنة ] ---
-# جلب المفتاح والقيم من السيرفر مباشرة
+# جلب المفتاح من إعدادات رندر (السطر الواحد)
 GEMINI_KEY = os.getenv("GEMINI_API_KEY") 
 INSTANCE_ID = "159896"
 ULTRA_TOKEN = "3a2kuk39wf15ejiu"
 
 genai.configure(api_key=GEMINI_KEY)
-# استخدام الموديل الذي اخترته من الموقع
-model = genai.GenerativeModel('gemini-3-pro-preview')
+
+# استخدام الموديل الجديد الذي اخترته
+model = genai.GenerativeModel('gemini-3-flash-preview')
 
 @app.route('/')
 def home():
-    return "<h1>سيرفر NJMwats يعمل بأمان ✅</h1>", 200
+    return "<h1>سيرفر NJM يعمل بموديل Gemini 3 Flash ✅</h1>", 200
 
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
@@ -26,20 +27,22 @@ def whatsapp_webhook():
         msg_body = data['data'].get('body')
         sender_id = data['data'].get('from')
         
+        # التأكد من أن الرسالة ليست مرسلة مني وتحتوي على نص
         if not data['data'].get('fromMe') and msg_body:
-            print(f"📩 رسالة مستلمة: {msg_body}")
+            print(f"📩 رسالة جديدة من {sender_id}: {msg_body}")
             try:
                 # توليد الرد بلهجة سعودية
-                res = model.generate_content(f"أنت مساعد راشد علي، رد بلهجة سعودية: {msg_body}")
+                res = model.generate_content(f"رد بلهجة سعودية تقنية: {msg_body}")
                 
                 # إرسال للواتساب عبر UltraMsg
                 url = f"https://api.ultramsg.com/instance{INSTANCE_ID}/messages/chat"
                 payload = {"token": ULTRA_TOKEN, "to": sender_id, "body": res.text}
                 
                 requests.post(url, data=payload)
-                print(f"✅ تم الرد بنجاح")
+                print(f"✅ تم الرد بسرعة الفلاش")
             except Exception as e:
-                print(f"❌ خطأ في معالجة الطلب: {e}")
+                # طباعة الخطأ في السجلات لمتابعته
+                print(f"❌ خطأ: {e}")
                 
     return "OK", 200
 
