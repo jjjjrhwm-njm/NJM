@@ -1,0 +1,5 @@
+flask
+requests
+google-generativeai
+pyTelegramBotAPI
+gunicorn
