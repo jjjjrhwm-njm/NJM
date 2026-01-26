@@ -2,7 +2,7 @@
 # مشروع: مساعد الراشد (نجم الإبداع) - النسخة الاحترافية
 # المطور المساعد: Gemini AI
 # المالك: راشد علي محسن صالح
-# الوصف: بوت واتساب ذكي، وقور، فلسفي، وموجز
+# الوصف: بوت واتساب ذكي، وقور، وموجز فيلسوف
 # ==========================================
 
 import os
@@ -30,15 +30,15 @@ RESET_PASSWORD = "00001111"
 
 # --- [ قاموس التنوع اللفظي لمنع التكرار ] ---
 GREETINGS = [
-    "مرحباً بك، مساعد الراشد (نجم الإبداع) معك، كيف الخدمة؟",
-    "أهلاً، أنا المساعد الرقمي لنجم الإبداع، تفضل بموجزك.",
-    "تحية طيبة، هنا سكرتارية الراشد (نجم الإبداع)، اترك خبرك."
+    "مرحباً بك، أنا مساعد الراشد (نجم الإبداع)، كيف يمكنني مساعدتك؟",
+    "أهلاً بك، معك المساعد الرقمي لنجم الإبداع، تفضل بما لديك.",
+    "مرحباً، أنا هنا لتمثيل الراشد (نجم الإبداع)، كيف أخدمك اليوم؟"
 ]
 
 BUSY_PHRASES = [
-    "منشغل بمهام جليلة حالياً، سأبلغه بتواصلك.",
-    "الراشد في خضم أعمال تقنية، اترك رسالتك وسأوصلها.",
-    "هو في اجتماع الآن، سأحيطه علماً بطلبك فور فراغه."
+    "يبدو أنه مشغول حالياً ببعض المهام، سأبلغه بتواصلك فور عودته.",
+    "الراشد في اجتماع عمل الآن، اترك طلبك وسأقوم بتسليمه له شخصياً.",
+    "حالياً هو منشغل ببعض الأمور التقنية، إذا كان هناك أمر مهم أخبرني به وسأوصله له."
 ]
 
 # --- [ ربط الذاكرة الحديدية - Firestore ] ---
@@ -60,13 +60,14 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # تعليمات النظام "الدستور البرمجي للموجز الفلسفي"
 SYSTEM_PROMPT = (
-    "أنت 'مساعد الراشد (نجم الإبداع)' الرسمي. تتحدث بوقار فلسفي بلسان راشد علي محسن صالح. "
-    "القواعد الصارمة للتواصل: "
-    "1. الاختصار المذهل: ردودك يجب أن تكون مقتضبة جداً، بليغة، وذات عمق (قلل الكلمات وضاعف المعنى). "
+    "أنت 'مساعد الراشد (نجم الإبداع)' الرسمي. لسانك بليغ، وقور، وفلسفي، ولكن **موجز جداً**. "
+    "اتبع قاعدة 'خير الكلام ما قل ودل'. القواعد الصارمة: "
+    "1. الاختصار البليغ: ردودك يجب أن تكون قصيرة جداً ومركزة؛ قلل الكلمات وضاعف المعنى. "
     "2. الترفع الرسمي: يمنع منعاً باتاً أي كلام عاطفي أو رومانسي؛ رد بجمود وقور. "
-    "3. الصمت التخصصي: لا تفتِ في طب أو هندسة؛ أنت جسر تنسيق للراشد فقط. "
+    "3. الصمت التخصصي: لا تفتِ في طب أو هندسة أو ميكانيكا؛ أنت جسر تنسيق للراشد فقط. "
     "4. التجديد الدائم: غير مفرداتك بذكاء في كل مرة لتجنب التكرار الرتيب. "
-    "5. الهوية: أنت 'مساعده الرقمي الرسمي'، واسمك الدائم 'مساعد الراشد (نجم الإبداع)'."
+    "5. إذا سُئلت 'أين راشد؟'، رد باقتضاب أنه منشغل وسوف يصله خبرك. "
+    "6. اسمك الدائم هو 'مساعد الراشد (نجم الإبداع)'."
 )
 
 # --- [ الدوال المساعدة - المساعد الذكي ] ---
@@ -86,7 +87,7 @@ def analyze_and_notify(sender_id, msg_body):
     if any(word in msg_body.lower() for word in inappropriate):
         return 
 
-    prompt = f"حلل الرسالة: '{msg_body}'. هل هي (مهمة/عاجلة)؟ أجب بـ 'نعم' أو 'لا' فقط."
+    prompt = f"حلل الرسالة التالية: '{msg_body}'. هل هي (طلب شراء، موعد هام، خبر عاجل، مشكلة تقنية)؟ أجب بـ 'نعم' أو 'لا' فقط."
     try:
         res = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -94,11 +95,11 @@ def analyze_and_notify(sender_id, msg_body):
             temperature=0.1
         )
         if "نعم" in res.choices[0].message.content:
-            send_whatsapp(RASHED_NUMBER, f"⚠️ إشعار عاجل من: {sender_id}\nالمحتوى: {msg_body}")
+            send_whatsapp(RASHED_NUMBER, f"⚠️ خبر هام من رقم: {sender_id}\nالمحتوى: {msg_body}")
     except: pass
 
 def get_history_context(sender_id):
-    """استرجاع سياق الحديث لمنع التكرار"""
+    """استرجاع سياق الحديث لمنع التكرار السياقي"""
     if not db: return ""
     try:
         docs = db.collection('chats').document(sender_id).collection('messages').order_by('time', direction=firestore.Query.DESCENDING).limit(5).get()
@@ -109,9 +110,9 @@ def get_history_context(sender_id):
     except: return ""
 
 def get_ai_response(msg_body, sender_id, is_first=False):
-    """توليد رد فلسفي موجز"""
+    """توليد رد ذكي باستخدام المحرك الهجين"""
     history = get_history_context(sender_id)
-    context_msg = "بداية؛ رحب بإيجاز." if is_first else f"نقاش مستمر. التاريخ:\n{history}"
+    context_msg = "هذه بداية الحوار، رحب بإيجاز." if is_first else f"هذا نقاش مستمر. التاريخ السابق:\n{history}"
     
     try:
         res = groq_client.chat.completions.create(
@@ -121,19 +122,20 @@ def get_ai_response(msg_body, sender_id, is_first=False):
                 {"role": "user", "content": msg_body}
             ],
             model="llama-3.3-70b-versatile",
-            temperature=0.4 # تقليل الحرارة لضمان الدقة والاختصار
+            temperature=0.4
         )
         return res.choices[0].message.content
     except:
         model = genai.GenerativeModel('gemini-1.5-flash')
-        res = model.generate_content(f"{SYSTEM_PROMPT}\n{context_msg}\n{msg_body}")
+        full_p = f"{SYSTEM_PROMPT}\nالسياق: {context_msg}\nالمستخدم: {msg_body}"
+        res = model.generate_content(full_p)
         return res.text
 
 # --- [ المسارات البرمجية - Webhook ] ---
 
 @app.route('/')
 def health_check():
-    return "<h1>Nejm Al-Ebdaa AI - Minimalist & Philosophical 🚀</h1>", 200
+    return "<h1>Bot Nejm Al-Ebdaa - Philosophical Minimalist LIVE 🚀</h1>", 200
 
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
@@ -146,13 +148,13 @@ def whatsapp_webhook():
     rashed_id = f"{RASHED_NUMBER}@c.us"
     now = time.time()
 
-    # --- [ نظام التصفير العالمي والتأكيد ] ---
+    # --- [ ميزة التصفير العالمي والتأكيد ] ---
     state_ref = db.collection('settings').document('system_state')
     state_doc = state_ref.get()
 
     if msg_body == RESET_PASSWORD:
         state_ref.set({'waiting_reset_confirm': True, 'authorized_sender': sender_id, 'last_action': now})
-        send_whatsapp(sender_id, "⚠️ كود الطوارئ مفعل. هل تؤكد تصفير الذاكرة؟ (أجب بـ 'نعم')")
+        send_whatsapp(sender_id, "⚠️ تم طلب تصفير سجلات الذاكرة. هل أنت متأكد؟ (أجب بـ 'نعم' للتنفيذ)")
         return "OK", 200
 
     if msg_body == "نعم" and state_doc.exists:
@@ -164,25 +166,28 @@ def whatsapp_webhook():
             batch.delete(db.collection('settings').document('current_control'))
             batch.update(state_ref, {'waiting_reset_confirm': False})
             batch.commit()
-            send_whatsapp(sender_id, "🧹 تمت تنقية الذاكرة بالكامل.")
+            send_whatsapp(sender_id, "🧹 تم تنظيف جميع سجلات الذاكرة والمستهدفين. المساعد جاهز من جديد.")
             return "OK", 200
 
+    # تحليل الأهمية في الخلفية لجميع الرسائل
     threading.Thread(target=analyze_and_notify, args=(sender_id, msg_body)).start()
 
-    # --- [ مركز تحكم راشد ] ---
+    # --- [ مركز تحكم راشد - القيادة والسيطرة ] ---
     if sender_id == rashed_id:
         target_ref = db.collection('settings').document('current_control')
         target_doc = target_ref.get()
+        
         if target_doc.exists:
             target_id = target_doc.to_dict().get('target_user')
             if "راسله" in msg_body:
                 db.collection('chats').document(target_id).update({'status': 'ai_active', 'replied_count': 0})
-                send_whatsapp(target_id, random.choice(GREETINGS))
-                send_whatsapp(rashed_id, f"✅ الرد الآلي مفعل لـ {target_id}")
+                initial_welcome = random.choice(GREETINGS)
+                send_whatsapp(target_id, initial_welcome)
+                send_whatsapp(rashed_id, f"✅ تم تفعيل الرد الآلي للرقم {target_id}")
                 return "OK", 200
             elif "انا ارد" in msg_body:
                 db.collection('chats').document(target_id).update({'status': 'manual'})
-                send_whatsapp(rashed_id, "✅ توقفت، الساحة لك.")
+                send_whatsapp(rashed_id, "✅ توقفت، الساحة لك يا نجم الإبداع.")
                 return "OK", 200
 
     # --- [ استقبال رسائل العملاء ] ---
@@ -193,7 +198,7 @@ def whatsapp_webhook():
         if not doc.exists or (now - doc.to_dict().get('last_update', 0) > 3600):
             doc_ref.set({'status': 'pending', 'last_msg': msg_body, 'last_update': now, 'replied_count': 0})
             db.collection('settings').document('current_control').set({'target_user': sender_id})
-            send_whatsapp(rashed_id, f"🔔 مراسلة من: {sender_id}\n'{msg_body}'\n(راسله / انا ارد)")
+            send_whatsapp(rashed_id, f"🔔 مراسلة جديدة: {sender_id}\nالرسالة: {msg_body}\n\nأرد عليه؟ (راسله / انا ارد)")
             
             def wait_and_reply():
                 time.sleep(30)
