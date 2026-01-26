@@ -15,7 +15,7 @@ from firebase_admin import credentials, firestore
 app = Flask(__name__)
 
 # --- [ الإعدادات القيادية ] ---
-RASHED_NUMBER = "966554526287" 
+RASHED_NUMBER = "966554526287" # رقمك الدولي المفتوح
 INSTANCE_ID = "159896"
 ULTRA_TOKEN = "3a2kuk39wf15ejiu"
 RESET_PASSWORD = "00001111" 
@@ -47,7 +47,6 @@ def send_whatsapp(to, body):
     requests.post(url, data={"token": ULTRA_TOKEN, "to": to, "body": body})
 
 def check_importance(msg_body):
-    """تحليل ذكي لمدى أهمية الرسالة عبر Groq"""
     prompt = f"حلل هل هذه الرسالة تتضمن عملاً، بيعاً، شراءً، أو خبراً طارئاً؟ '{msg_body}'. أجب بـ (مهم) أو (عادي) فقط."
     try:
         res = groq_client.chat.completions.create(
@@ -73,23 +72,16 @@ def get_ai_reply(msg_body, is_first_msg=False):
         return res.text
 
 def handle_important_negotiation(sender_id):
-    """تمثيلية المناورة والمقاطعة النهائية"""
     time.sleep(5)
     send_whatsapp(sender_id, "لحظة من فضلك، سأقوم بمحاولة مراسلته الآن على رقمه الخاص وتنبيهه لأهمية أمرك.. انتظر لحظة.")
     time.sleep(15)
-    
     tz = pytz.timezone('Asia/Riyadh')
     hour = datetime.now(tz).hour
-    
-    # رسالة المقاطعة المدمجة مع منطق الوقت
-    base_msg = "اعتذر منك على المقاطعة، هناك شخص آخر يراسل ويجب أن أرد عليه، أما بشأن مراسلتك سأخبر الراشد فور عودته. "
-    
     if 23 <= hour or hour <= 7:
-        final_reply = base_msg + "يبدو أن الوقت متأخر جداً وقد يكون نائماً الآن. مع السلامة."
+        reply = "اعتذر منك بشدة، لم أجد رد منه حالياً قد يكون نائماً. سأخبره بموضوعك فور استيقاظه."
     else:
-        final_reply = base_msg + "للأسف لم أجد رداً منه حالياً، يبدو أنه مشغول جداً. مع السلامة."
-    
-    send_whatsapp(sender_id, final_reply)
+        reply = "للأسف لم أجد رداً منه حالياً، يبدو أنه مشغول جداً. سأخبره فور عودته بأهمية موضوعك."
+    send_whatsapp(sender_id, reply)
 
 @app.route('/')
 def home(): return "<h1>Bot Nejm Al-Ebdaa is Online 🚀</h1>", 200
@@ -117,53 +109,57 @@ def whatsapp_webhook():
     if msg_body == "نعم" and state_doc.exists:
         state_data = state_doc.to_dict()
         if state_data.get('waiting_reset_confirm') and state_data.get('authorized_sender') == sender_id:
-            # مسح شامل حقيقي
             batch = db.batch()
             docs = db.collection('chats').limit(500).get()
             for doc in docs: batch.delete(doc.reference)
             batch.delete(db.collection('settings').document('current_control'))
             batch.update(state_ref, {'waiting_reset_confirm': False})
             batch.commit()
-            send_whatsapp(sender_id, "🧹 تم تصفير جميع سجلات الذاكرة والمستهدفين بنجاح. يمكنك الاختبار الآن.")
+            send_whatsapp(sender_id, "🧹 تم تصفير جميع سجلات الذاكرة بنجاح.")
             return "OK", 200
 
-    # --- [ مركز تحكم راشد ] ---
+    # --- [ مركز تحكم راشد - رقمك مفتوح ولا يتقيد بوقت ] ---
     if sender_id == rashed_id:
         target_ref = db.collection('settings').document('current_control')
         target_doc = target_ref.get()
+        
+        # إذا أرسلت أمراً للتحكم بشخص آخر
         if target_doc.exists:
             target_id = target_doc.to_dict().get('target_user')
             if "راسله" in msg_body:
                 db.collection('chats').document(target_id).update({'status': 'ai_active', 'session_start': now, 'replied_count': 0})
                 send_whatsapp(target_id, get_ai_reply("أهلاً", is_first_msg=True))
                 send_whatsapp(rashed_id, f"✅ تم تفعيل الرد الآلي لـ {target_id}")
+                return "OK", 200
             elif "انا ارد" in msg_body:
                 db.collection('chats').document(target_id).update({'status': 'manual'})
                 send_whatsapp(rashed_id, "✅ توقفت، الميكروفون معك.")
+                return "OK", 200
+
+        # رد آلي مباشر ومفتوح لراشد فقط
+        reply = get_ai_reply(msg_body, is_first_msg=False)
+        send_whatsapp(rashed_id, reply)
+        return "OK", 200
 
     # --- [ استقبال رسائل العملاء ] ---
     elif not data['data'].get('fromMe'):
         doc_ref = db.collection('chats').document(sender_id)
         doc = doc_ref.get()
-        
         is_imp = check_importance(msg_body)
         max_dur = 180 if is_imp else 120 
 
         if is_imp:
             send_whatsapp(rashed_id, f"🔥 تنبيه مهم من {sender_id}:\n{msg_body}")
 
-        # منطق الجلسة الجديدة (بعد التصفير أو مرور ساعة)
         if not doc.exists or (now - doc.to_dict().get('last_update', 0) > 3600):
             doc_ref.set({'status': 'pending', 'last_msg': msg_body, 'last_update': now, 'session_start': now, 'replied_count': 0, 'is_important': is_imp})
             db.collection('settings').document('current_control').set({'target_user': sender_id})
-            send_whatsapp(rashed_id, f"🔔 مراسلة جديدة: {sender_id}\nالرسالة: {msg_body}\n\nأرد عليه؟ (راسله / انا ارد)")
-            # تأخير 30 ثانية للرد الأول
+            send_whatsapp(rashed_id, f"🔔 مراسلة جديدة: {sender_id}\n{msg_body}\n\nأرد عليه؟ (راسله / انا ارد)")
             threading.Thread(target=lambda: (time.sleep(30), delayed_check(sender_id, msg_body))).start()
         else:
             chat_data = doc.to_dict()
             if chat_data.get('status') == 'ai_active':
                 if now - chat_data.get('session_start', now) > max_dur:
-                    # تنفيذ المقاطعة النهائية
                     if chat_data.get('is_important'):
                         threading.Thread(target=handle_important_negotiation, args=(sender_id,)).start()
                     else:
