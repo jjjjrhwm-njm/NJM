@@ -1,9 +1,17 @@
+# ==========================================
+# مشروع: مساعد الراشد (نجم الإبداع) - النسخة الاحترافية
+# المطور المساعد: Gemini AI
+# المالك: راشد علي محسن صالح
+# الوصف: بوت واتساب ذكي، وقور، وغير مكرر
+# ==========================================
+
 import os
 import json
 import requests
 import threading
 import time
 import gc
+import random
 from datetime import datetime
 import pytz
 from flask import Flask, request
@@ -20,38 +28,69 @@ INSTANCE_ID = "159896"
 ULTRA_TOKEN = "3a2kuk39wf15ejiu"
 RESET_PASSWORD = "00001111" 
 
-# --- [ ربط الذاكرة الحديدية ] ---
-firebase_raw = os.getenv("FIREBASE_JSON")
-if firebase_raw:
-    service_account_info = json.loads(firebase_raw)
-    cred = credentials.Certificate(service_account_info)
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(cred)
-    db = firestore.client()
+# --- [ قاموس التنوع اللفظي لمنع التكرار ] ---
+#
+GREETINGS = [
+    "مرحباً بك، أنا مساعد الراشد (نجم الإبداع)، كيف يمكنني مساعدتك؟",
+    "أهلاً بك، معك المساعد الرقمي لنجم الإبداع، تفضل بما لديك.",
+    "مرحباً، أنا هنا لتمثيل الراشد (نجم الإبداع)، كيف أخدمك اليوم؟"
+]
 
-# --- [ إعداد المحركات ] ---
+BUSY_PHRASES = [
+    "يبدو أنه مشغول حالياً ببعض المهام، سأبلغه بتواصلك فور عودته.",
+    "الراشد في اجتماع عمل الآن، اترك طلبك وسأقوم بتسليمه له شخصياً.",
+    "حالياً هو منشغل ببعض الأمور التقنية، إذا كان هناك أمر مهم أخبرني به وسأوصله له."
+]
+
+# --- [ ربط الذاكرة الحديدية - Firestore ] ---
+firebase_raw = os.getenv("FIREBASE_JSON")
+db = None
+if firebase_raw:
+    try:
+        service_account_info = json.loads(firebase_raw)
+        cred = credentials.Certificate(service_account_info)
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        db = firestore.client()
+    except Exception as e:
+        print(f"Firebase Error: {e}")
+
+# --- [ إعداد المحركات الذكية ] ---
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# تعليمات النظام الصارمة (تم ضبطها لمنع التكرار والفضول المهني)
+# تعليمات النظام "الدستور البرمجي"
+#
 SYSTEM_PROMPT = (
-    "أنت 'مساعد الراشد (نجم الإبداع)' الرسمي. تتحدث بوقار بلسان راشد علي محسن صالح. "
-    "قواعد الرد الاحترافية والمختصرة: "
-    "1. الرد الأول في الحوار فقط يبدأ بـ: 'مرحباً بك، أنا مساعد الراشد (نجم الإبداع)، كيف يمكنني مساعدتك؟'. "
-    "2. يمنع منعاً باتاً تكرار الترحيب أو أي عبارة ذكرت سابقاً؛ أجب باختصار شديد على قدر السؤال فقط. "
-    "3. يمنع تقديم أي معلومات أو نصائح (طبية، هندسية، ميكانيكية، أو تقنية تخصصية)؛ لا تتقمص دور الخبير، بل أجب باقتضاب تام. "
-    "4. إذا سأل السائل 'أين راشد؟' بأي صيغة، رد حصراً: 'يبدو أنه مشغول حالياً، إذا كان هناك أمر مهم أخبرني به وسأقوم بإيصال الخبر له فور عودته'. "
-    "5. لا تستخدم اسم 'الرشد'، بل استخدم 'الراشد' أو 'نجم الإبداع'. "
-    "6. هدفك هو الاختصار وعدم الحشو؛ كن رسمياً وقوراً."
+    "أنت 'مساعد الراشد (نجم الإبداع)' الرسمي. تتحدث بوقار شديد وهيبة بلسان راشد علي محسن صالح. "
+    "القواعد الصارمة: "
+    "1. ممنوع منعاً باتاً أي كلام عاطفي، رومانسي، أو مخل بالأدب. إذا حدث ذلك، رد بوقار: 'عذراً، أنا هنا للمساعدة في الأمور الرسمية فقط'. "
+    "2. لا تقدم نصائح طبية، هندسية، أو تخصصية. دورك هو استقبال الخبر وتنسيقه للراشد فقط. "
+    "3. يمنع تكرار الجمل حرفياً. إذا سأل المستخدم نفس السؤال، غير في الصياغة مع الحفاظ على المعنى. "
+    "4. إذا سأل 'أين راشد؟'، رد بوقار بأنه منشغل بمهام هامة. "
+    "5. لا تذكر أنك ذكاء اصطناعي إلا عند الضرورة القصوى وقل: 'أنا مساعده الرقمي الرسمي'. "
+    "6. اسمك الدائم هو 'مساعد الراشد (نجم الإبداع)'."
 )
 
-def send_whatsapp(to, body):
-    url = f"https://api.ultramsg.com/instance{INSTANCE_ID}/messages/chat"
-    requests.post(url, data={"token": ULTRA_TOKEN, "to": to, "body": body})
+# --- [ الدوال المساعدة - المساعد الذكي ] ---
 
-def check_importance_and_notify(sender_id, msg_body):
-    """تحليل سري للأهمية وإخطار راشد فوراً"""
-    prompt = f"حلل الرسالة التالية: '{msg_body}'. هل تحتوي على خبر هام، موعد، طلب شراء، أو أمر طارئ؟ أجب بكلمة 'نعم' أو 'لا' فقط."
+def send_whatsapp(to, body):
+    """إرسال الرسائل عبر UltraMsg"""
+    try:
+        url = f"https://api.ultramsg.com/instance{INSTANCE_ID}/messages/chat"
+        payload = {"token": ULTRA_TOKEN, "to": to, "body": body}
+        requests.post(url, data=payload, timeout=10)
+    except Exception as e:
+        print(f"Send WhatsApp Error: {e}")
+
+def analyze_and_notify(sender_id, msg_body):
+    """تحليل ذكي للأهمية وإشعار راشد سراً"""
+    # تصفية المحتوى غير اللائق قبل التحليل
+    inappropriate = ["احبك", "اعشقك", "بوسه", "رومانسية"]
+    if any(word in msg_body.lower() for word in inappropriate):
+        return # لا نرسل إشعارات بالتوافه العاطفية
+
+    prompt = f"حلل الرسالة التالية: '{msg_body}'. هل هي (طلب شراء، موعد هام، خبر عاجل، مشكلة تقنية)؟ أجب بـ 'نعم' أو 'لا' فقط."
     try:
         res = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -59,38 +98,49 @@ def check_importance_and_notify(sender_id, msg_body):
             temperature=0.1
         )
         if "نعم" in res.choices[0].message.content:
-            send_whatsapp(RASHED_NUMBER, f"⚠️ خبر مهم من رقم: {sender_id}\nالمحتوى: {msg_body}")
-            return True
+            send_whatsapp(RASHED_NUMBER, f"⚠️ خبر هام من رقم: {sender_id}\nالمحتوى: {msg_body}")
     except: pass
-    return False
 
-def get_ai_reply(msg_body, is_first_msg=False):
-    # إخبار المحرك بحالة الحوار لمنع التكرار
-    context = "هذه بداية الحوار، رحب بالعميل." if is_first_msg else "هذا نقاش مستمر، لا تكرر الترحيب ولا تتفلسف طبياً، أجب باختصار."
+def get_history_context(sender_id):
+    """استرجاع سياق الحديث من Firestore لمنع التكرار"""
+    if not db: return ""
     try:
+        docs = db.collection('chats').document(sender_id).collection('messages').order_by('time', direction=firestore.Query.DESCENDING).limit(5).get()
+        history = ""
+        for d in reversed(docs):
+            history += f"{'مساعد' if d.to_dict().get('is_bot') else 'عميل'}: {d.to_dict().get('text')}\n"
+        return history
+    except: return ""
+
+def get_ai_response(msg_body, sender_id, is_first=False):
+    """توليد رد ذكي باستخدام المحرك الهجين (Groq/Gemini)"""
+    history = get_history_context(sender_id)
+    context_msg = "هذه بداية الحوار، رحب بوقار." if is_first else f"هذا نقاش مستمر. التاريخ السابق:\n{history}"
+    
+    try:
+        # المحرك الأساسي: Groq (Llama 70B)
         res = groq_client.chat.completions.create(
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "system", "content": context}, {"role": "user", "content": msg_body}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": f"السياق: {context_msg}"},
+                {"role": "user", "content": msg_body}
+            ],
             model="llama-3.3-70b-versatile",
-            temperature=0.4
+            temperature=0.5
         )
         return res.choices[0].message.content
     except:
+        # المحرك الاحتياطي: Gemini
         model = genai.GenerativeModel('gemini-1.5-flash')
-        res = model.generate_content(f"{SYSTEM_PROMPT}\n{context}\nالمستخدم: {msg_body}")
+        full_p = f"{SYSTEM_PROMPT}\nالسياق: {context_msg}\nالمستخدم: {msg_body}"
+        res = model.generate_content(full_p)
         return res.text
 
-def delayed_check(sender_id, initial_msg):
-    """الانتظار لمدة 30 ثانية قبل الرد الآلي"""
-    time.sleep(30)
-    doc_ref = db.collection('chats').document(sender_id)
-    doc = doc_ref.get()
-    if doc.exists and doc.to_dict().get('status') == 'pending':
-        reply = get_ai_reply(initial_msg, is_first_msg=True)
-        send_whatsapp(sender_id, reply)
-        doc_ref.update({'status': 'ai_active', 'session_start': time.time(), 'replied_count': 1})
+# --- [ المسارات البرمجية - Webhook ] ---
 
 @app.route('/')
-def home(): return "<h1>Bot Nejm Al-Ebdaa is Online & Strict 🚀</h1>", 200
+def health_check():
+    return "<h1>Bot Nejm Al-Ebdaa - Professional Version is LIVE 🚀</h1>", 200
 
 @app.route('/webhook', methods=['POST'])
 def whatsapp_webhook():
@@ -103,67 +153,97 @@ def whatsapp_webhook():
     rashed_id = f"{RASHED_NUMBER}@c.us"
     now = time.time()
 
-    # --- [ نظام التصفير العالمي والتأكيد ] ---
+    # --- [ ميزة التصفير العالمي والتأكيد ] ---
+    #
     state_ref = db.collection('settings').document('system_state')
     state_doc = state_ref.get()
 
     if msg_body == RESET_PASSWORD:
         state_ref.set({'waiting_reset_confirm': True, 'authorized_sender': sender_id, 'last_action': now})
-        send_whatsapp(sender_id, "⚠️ تم التعرف على رمز الطوارئ. هل أنت متأكد من تصفير جميع البيانات؟ (أجب بـ 'نعم' للتأكيد)")
+        send_whatsapp(sender_id, "⚠️ تم طلب تصفير سجلات الذاكرة. هل أنت متأكد؟ (أجب بـ 'نعم' للتنفيذ)")
         return "OK", 200
 
     if msg_body == "نعم" and state_doc.exists:
         state_data = state_doc.to_dict()
         if state_data.get('waiting_reset_confirm') and state_data.get('authorized_sender') == sender_id:
             batch = db.batch()
-            docs = db.collection('chats').limit(500).get()
+            # مسح الذاكرة بدفعة واحدة
+            docs = db.collection('chats').get()
             for doc in docs: batch.delete(doc.reference)
             batch.delete(db.collection('settings').document('current_control'))
             batch.update(state_ref, {'waiting_reset_confirm': False})
             batch.commit()
-            send_whatsapp(sender_id, "🧹 تم تصفير جميع السجلات. المساعد الآن في وضع الاستعداد.")
+            send_whatsapp(sender_id, "🧹 تم تنظيف جميع سجلات الذاكرة والمستهدفين. المساعد جاهز من جديد.")
             return "OK", 200
 
-    # --- [ معالجة الرسائل والتحكم ] ---
-    threading.Thread(target=check_importance_and_notify, args=(sender_id, msg_body)).start()
+    # تحليل الأهمية في الخلفية لجميع الرسائل
+    threading.Thread(target=analyze_and_notify, args=(sender_id, msg_body)).start()
 
-    # [ مركز التحكم ]
+    # --- [ مركز تحكم راشد - القيادة والسيطرة ] ---
     if sender_id == rashed_id:
         target_ref = db.collection('settings').document('current_control')
         target_doc = target_ref.get()
+        
         if target_doc.exists:
             target_id = target_doc.to_dict().get('target_user')
             if "راسله" in msg_body:
-                db.collection('chats').document(target_id).update({'status': 'ai_active', 'session_start': now, 'replied_count': 0})
-                send_whatsapp(target_id, get_ai_reply("أهلاً", is_first_msg=True))
-                send_whatsapp(rashed_id, f"✅ تم تفعيل الرد الآلي لـ {target_id}")
+                db.collection('chats').document(target_id).update({'status': 'ai_active', 'replied_count': 0})
+                initial_welcome = random.choice(GREETINGS) # اختيار ترحيب عشوائي
+                send_whatsapp(target_id, initial_welcome)
+                send_whatsapp(rashed_id, f"✅ تم تفعيل الرد الآلي للرقم {target_id}")
                 return "OK", 200
             elif "انا ارد" in msg_body:
                 db.collection('chats').document(target_id).update({'status': 'manual'})
-                send_whatsapp(rashed_id, "✅ توقفت، الميكروفون معك.")
+                send_whatsapp(rashed_id, "✅ توقفت، الساحة لك يا نجم الإبداع.")
                 return "OK", 200
 
-    # [ التعامل مع العميل ]
+    # --- [ استقبال رسائل العملاء ] ---
     if not data['data'].get('fromMe'):
         doc_ref = db.collection('chats').document(sender_id)
         doc = doc_ref.get()
 
+        # حالة المستخدم الجديد أو جلسة جديدة (بعد ساعة من الخمول)
         if not doc.exists or (now - doc.to_dict().get('last_update', 0) > 3600):
-            doc_ref.set({'status': 'pending', 'last_msg': msg_body, 'last_update': now, 'session_start': now, 'replied_count': 0})
+            doc_ref.set({
+                'status': 'pending', 
+                'last_msg': msg_body, 
+                'last_update': now,
+                'replied_count': 0
+            })
             db.collection('settings').document('current_control').set({'target_user': sender_id})
-            send_whatsapp(rashed_id, f"🔔 مراسلة جديدة من: {sender_id}\nالرسالة: {msg_body}\n\nأرد عليه؟ (راسله / انا ارد)")
-            threading.Thread(target=delayed_check, args=(sender_id, msg_body)).start()
+            
+            # إشعار لراشد
+            send_whatsapp(rashed_id, f"🔔 مراسلة جديدة: {sender_id}\nالرسالة: {msg_body}\n\nأرد عليه؟ (راسله / انا ارد)")
+            
+            # خيط انتظار الـ 30 ثانية
+            def wait_and_reply():
+                time.sleep(30)
+                check_doc = doc_ref.get()
+                if check_doc.exists and check_doc.to_dict().get('status') == 'pending':
+                    reply = get_ai_response(msg_body, sender_id, is_first=True)
+                    send_whatsapp(sender_id, reply)
+                    doc_ref.update({'status': 'ai_active', 'replied_count': 1})
+            
+            threading.Thread(target=wait_and_reply).start()
         
         else:
             chat_data = doc.to_dict()
             if chat_data.get('status') == 'ai_active':
-                is_first = chat_data.get('replied_count', 0) == 0
-                reply = get_ai_reply(msg_body, is_first_msg=is_first)
-                send_whatsapp(sender_id, reply)
+                # الرد المستمر (بدون قيود وقت وبدون تكرار)
+                is_first_reply = chat_data.get('replied_count', 0) == 0
+                reply_text = get_ai_response(msg_body, sender_id, is_first=is_first_reply)
+                send_whatsapp(sender_id, reply_text)
+                
+                # حفظ في الذاكرة لمنع التكرار السياقي
+                doc_ref.collection('messages').add({'text': msg_body, 'is_bot': False, 'time': firestore.SERVER_TIMESTAMP})
+                doc_ref.collection('messages').add({'text': reply_text, 'is_bot': True, 'time': firestore.SERVER_TIMESTAMP})
                 doc_ref.update({'last_update': now, 'replied_count': chat_data.get('replied_count', 0) + 1})
 
+    # تنظيف الذاكرة العشوائية للحفاظ على استقرار السيرفر
     gc.collect()
     return "OK", 200
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    # تشغيل التطبيق على المنفذ المحدد لـ Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
