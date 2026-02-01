@@ -1,224 +1,92 @@
-# ==========================================
-# مشروع: مساعد الراشد (نجم الإبداع) - النسخة الاحترافية (بشرية بالكامل)
-# المالك والمطور: راشد علي محسن صالح
-# الوصف: سكرتير رقمي بشري، وقور، موجز، وحازم عند الضرورة
-# ==========================================
-
 import os
 import json
+import datetime
 import requests
-import threading
-import time
-import gc
 import random
-from datetime import datetime
-import pytz
-from flask import Flask, request
-from groq import Groq
-import google.generativeai as genai
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, db
+from flask import Flask, request
 
 app = Flask(__name__)
 
-# --- [ الإعدادات القيادية ] ---
-RASHED_NUMBER = "966554526287" 
-INSTANCE_ID = "159896"
-ULTRA_TOKEN = "3a2kuk39wf15ejiu"
-RESET_PASSWORD = "00001111" 
+# --- [1] الربط بمخزن فيرباس (Firebase) لضمان عدم نسيان المحادثات للأبد ---
+try:
+    config_raw = os.environ.get("FIREBASE_CONFIG")
+    db_url = os.environ.get("FIREBASE_DB_URL")
+    if config_raw and db_url:
+        cred_dict = json.loads(config_raw)
+        cred = credentials.Certificate(cred_dict)
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred, {'databaseURL': db_url})
+except Exception as e:
+    print(f"Firebase Error: {e}")
 
-# --- [ قاموس التنوع اللفظي لمنع التكرار ] ---
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+# --- [2] مصفوفة التنوع اللفظي (اقتباس من كودك لمنع التكرار) ---
 GREETINGS = [
     "مرحباً بك، مساعد الراشد (نجم الإبداع) معك، كيف الخدمة؟",
     "أهلاً، أنا المساعد الرقمي لنجم الإبداع، تفضل بموجزك.",
     "تحية طيبة، هنا سكرتارية الراشد (نجم الإبداع)، اترك خبرك."
 ]
 
-BUSY_PHRASES = [
-    "منشغل بمهام جليلة حالياً، سأبلغه بتواصلك.",
-    "الراشد في خضم أعمال تقنية، اترك رسالتك وسأوصلها.",
-    "هو في اجتماع الآن، سأحيطه علماً بطلبك فور فراغه."
-]
-
-# --- [ ربط الذاكرة الحديدية - Firestore ] ---
-firebase_raw = os.getenv("FIREBASE_JSON")
-db = None
-if firebase_raw:
-    try:
-        service_account_info = json.loads(firebase_raw)
-        cred = credentials.Certificate(service_account_info)
-        if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred)
-        db = firestore.client()
-    except Exception as e:
-        print(f"Firebase Error: {e}")
-
-# --- [ إعداد المحركات الذكية ] ---
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-# تعليمات النظام "الدستور البرمجي للسكرتير البشري"
+# --- [3] الدستور البرمجي للسكرتير البشري (من منطق كودك) ---
 SYSTEM_PROMPT = (
-    "أنت 'مساعد الراشد (نجم الإبداع)' الرسمي. لست روبوتاً، بل سكرتير بشري وقور، موجز، وذكي. "
-    "قواعد السلوك البشري: "
-    "1. التفاعل النفسي: رد كإنسان؛ كن لبقاً مع المحترمين، وحازماً مع الملحين. "
-    "2. رد فعل العصبية: إذا كرر العميل سؤاله أكثر من مرتين أو كان لحوحاً، أظهر 'ضيقاً بشرياً وقوراً' (مثلاً: 'يا أخي، أخبرتك مسبقاً أنه مشغول، الإلحاح لن يغير الأمر، اترك موجزك وانتظر'). "
-    "3. الاختصار والرزانة: ردودك مقتضبة جداً وذات هيبة. لا تستخدم عبارات 'معلبة'. "
-    "4. وظيفة واحدة: أنت سكرتير إداري فقط. لست دكتوراً، ولا مهندساً، ولا ميكانيكياً. إذا سُئلت عن تخصص، رد بوقار: 'أنا مساعده الإداري فقط، اترك استفسارك وسأعرضه عليه'. "
-    "5. منع التكرار: يمنع تكرار الترحيب أو أي جملة قيلت سابقاً. غير صياغتك دائماً لتبدو يقظاً ومتابعاً. "
-    "6. الرفض الحازم: أي كلام عاطفي أو غير لائق، واجهه ببرود إنساني حازم ينهي التمادي فوراً. "
-    "7. الهوية: أنت 'المساعد الرقمي الرسمي لنجم الإبداع'."
+    "أنت 'مساعد الراشد (نجم الإبداع)' الرسمي. لست روبوتاً، بل سكرتير بشري وقور. "
+    "قواعدك البشرية: "
+    "1. التفاعل النفسي: كن لبقاً مع المحترمين، وحازماً مع الملحين. "
+    "2. رد فعل العصبية: إذا كرر العميل سؤاله أو كان لحوحاً، أظهر ضيقاً بشرياً وقوراً. "
+    "3. الاختصار: ردودك مقتضبة جداً وذات هيبة (7 كلمات كحد أقصى). "
+    "4. منع التكرار: يمنع تكرار الترحيب أو أي جملة قيلت سابقاً. غير صياغتك دائماً. "
+    "5. لا تقل 'أنا ذكاء اصطناعي' أو 'نموذج'. أنت سكرتير حقيقي."
 )
 
-# --- [ الدوال المساعدة - المساعد الذكي ] ---
-
-def send_whatsapp(to, body):
-    """إرسال الرسائل عبر UltraMsg"""
+def manage_firebase(sender, role=None, content=None):
     try:
-        url = f"https://api.ultramsg.com/instance{INSTANCE_ID}/messages/chat"
-        payload = {"token": ULTRA_TOKEN, "to": to, "body": body}
-        requests.post(url, data=payload, timeout=10)
-    except Exception as e:
-        print(f"Send WhatsApp Error: {e}")
+        ref = db.reference(f'chats/{sender}')
+        if content:
+            ref.push({'role': role, 'content': content, 'ts': datetime.datetime.now().isoformat()})
+        snapshot = ref.order_by_child('ts').limit_to_last(6).get()
+        if not snapshot: return []
+        return [{"role": snapshot[k]['role'], "content": snapshot[k]['content']} for k in sorted(snapshot.keys())]
+    except: return []
 
-def analyze_and_notify(sender_id, msg_body):
-    """تحليل ذكي للأهمية وإشعار راشد سراً"""
-    inappropriate = ["احبك", "اعشقك", "بوسه", "رومانسية"]
-    if any(word in msg_body.lower() for word in inappropriate):
-        return 
-
-    prompt = f"حلل الرسالة: '{msg_body}'. هل هي (مهمة/عاجلة)؟ أجب بـ 'نعم' أو 'لا' فقط."
+@app.route('/', methods=['POST'])
+def handle_msg():
     try:
-        res = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
-            temperature=0.1
-        )
-        if "نعم" in res.choices[0].message.content:
-            send_whatsapp(RASHED_NUMBER, f"⚠️ إشعار عاجل من: {sender_id}\nالمحتوى: {msg_body}")
-    except: pass
+        data = request.get_json()
+        user_msg = data.get('message', '').strip()
+        sender = data.get('sender', 'unknown')
+        if not user_msg: return "OK", 200
 
-def get_history_context(sender_id):
-    """استرجاع سياق الحديث لمنع التكرار السياقي"""
-    if not db: return ""
-    try:
-        docs = db.collection('chats').document(sender_id).collection('messages').order_by('time', direction=firestore.Query.DESCENDING).limit(5).get()
-        history = ""
-        for d in reversed(docs):
-            history += f"{'مساعد' if d.to_dict().get('is_bot') else 'عميل'}: {d.to_dict().get('text')}\n"
-        return history
-    except: return ""
+        # جلب الذاكرة
+        history = manage_firebase(sender)
+        is_first = len(history) == 0
 
-def get_ai_response(msg_body, sender_id, is_first=False):
-    """توليد رد بشري فلسفي موجز"""
-    history = get_history_context(sender_id)
-    context_msg = "بداية؛ رحب بوقار." if is_first else f"نقاش مستمر، تفاعل كبشر. التاريخ:\n{history}"
-    
-    try:
-        res = groq_client.chat.completions.create(
-            messages=[
+        # منطق التنوع اللفظي: إذا كانت أول مرة، اختر ترحيباً عشوائياً
+        first_reply_context = f"هذا ترحيبك الأول، اختر أسلوباً من: {random.choice(GREETINGS)}" if is_first else "هذا نقاش مستمر، لا ترحب ثانية."
+
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "system", "content": f"السياق: {context_msg}"},
-                {"role": "user", "content": msg_body}
-            ],
-            model="llama-3.3-70b-versatile",
-            temperature=0.6 # درجة حرارة متوازنة لزيادة "العفوية البشرية"
-        )
-        return res.choices[0].message.content
-    except:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        res = model.generate_content(f"{SYSTEM_PROMPT}\n{context_msg}\n{msg_body}")
-        return res.text
+                {"role": "system", "content": f"السياق الحالي: {first_reply_context}"}
+            ] + history + [{"role": "user", "content": user_msg}],
+            "temperature": 0.7 # رفع الحرارة لزيادة التنوع البشري
+        }
 
-# --- [ المسارات البرمجية - Webhook ] ---
-
-@app.route('/')
-def health_check():
-    return "<h1>Nejm Al-Ebdaa AI - Human Secretary LIVE 🚀</h1>", 200
-
-@app.route('/webhook', methods=['POST'])
-def whatsapp_webhook():
-    data = request.get_json(force=True, silent=True)
-    if not data or data.get('event_type') != 'message_received':
-        return "OK", 200
-
-    msg_body = data['data'].get('body', '').strip()
-    sender_id = data['data'].get('from')
-    rashed_id = f"{RASHED_NUMBER}@c.us"
-    now = time.time()
-
-    # --- [ نظام التصفير العالمي والتأكيد ] ---
-    state_ref = db.collection('settings').document('system_state')
-    state_doc = state_ref.get()
-
-    if msg_body == RESET_PASSWORD:
-        state_ref.set({'waiting_reset_confirm': True, 'authorized_sender': sender_id, 'last_action': now})
-        send_whatsapp(sender_id, "⚠️ تم طلب تصفير سجلات الذاكرة. هل أنت متأكد؟ (أجب بـ 'نعم' للتنفيذ)")
-        return "OK", 200
-
-    if msg_body == "نعم" and state_doc.exists:
-        state_data = state_doc.to_dict()
-        if state_data.get('waiting_reset_confirm') and state_data.get('authorized_sender') == sender_id:
-            batch = db.batch()
-            docs = db.collection('chats').get()
-            for doc in docs: batch.delete(doc.reference)
-            batch.delete(db.collection('settings').document('current_control'))
-            batch.update(state_ref, {'waiting_reset_confirm': False})
-            batch.commit()
-            send_whatsapp(sender_id, "🧹 تمت تنقية الذاكرة بالكامل من قبلك.")
-            return "OK", 200
-
-    threading.Thread(target=analyze_and_notify, args=(sender_id, msg_body)).start()
-
-    # --- [ مركز تحكم راشد ] ---
-    if sender_id == rashed_id:
-        target_ref = db.collection('settings').document('current_control')
-        target_doc = target_ref.get()
-        if target_doc.exists:
-            target_id = target_doc.to_dict().get('target_user')
-            if "راسله" in msg_body:
-                db.collection('chats').document(target_id).update({'status': 'ai_active', 'replied_count': 0})
-                send_whatsapp(target_id, random.choice(GREETINGS))
-                send_whatsapp(rashed_id, f"✅ الرد الآلي مفعل لـ {target_id}")
-                return "OK", 200
-            elif "انا ارد" in msg_body:
-                db.collection('chats').document(target_id).update({'status': 'manual'})
-                send_whatsapp(rashed_id, "✅ توقفت، الساحة لك.")
-                return "OK", 200
-
-    # --- [ استقبال رسائل العملاء ] ---
-    if not data['data'].get('fromMe'):
-        doc_ref = db.collection('chats').document(sender_id)
-        doc = doc_ref.get()
-
-        if not doc.exists or (now - doc.to_dict().get('last_update', 0) > 3600):
-            doc_ref.set({'status': 'pending', 'last_msg': msg_body, 'last_update': now, 'replied_count': 0})
-            db.collection('settings').document('current_control').set({'target_user': sender_id})
-            send_whatsapp(rashed_id, f"🔔 مراسلة من: {sender_id}\n'{msg_body}'\n(راسله / انا ارد)")
-            
-            def wait_and_reply():
-                time.sleep(30)
-                check_doc = doc_ref.get()
-                if check_doc.exists and check_doc.to_dict().get('status') == 'pending':
-                    reply = get_ai_response(msg_body, sender_id, is_first=True)
-                    send_whatsapp(sender_id, reply)
-                    doc_ref.update({'status': 'ai_active', 'replied_count': 1})
-            threading.Thread(target=wait_and_reply).start()
+        res = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                            json=payload, headers={"Authorization": f"Bearer {GROQ_API_KEY}"})
         
-        else:
-            chat_data = doc.to_dict()
-            if chat_data.get('status') == 'ai_active':
-                is_first_reply = chat_data.get('replied_count', 0) == 0
-                reply_text = get_ai_response(msg_body, sender_id, is_first=is_first_reply)
-                send_whatsapp(sender_id, reply_text)
-                
-                doc_ref.collection('messages').add({'text': msg_body, 'is_bot': False, 'time': firestore.SERVER_TIMESTAMP})
-                doc_ref.collection('messages').add({'text': reply_text, 'is_bot': True, 'time': firestore.SERVER_TIMESTAMP})
-                doc_ref.update({'last_update': now, 'replied_count': chat_data.get('replied_count', 0) + 1})
+        reply = res.json()['choices'][0]['message']['content']
 
-    gc.collect()
-    return "OK", 200
+        # حفظ الذاكرة
+        manage_firebase(sender, "user", user_msg)
+        manage_firebase(sender, "assistant", reply)
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+        return reply, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    except:
+        return "أبشر، ببلغ راشد.", 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
