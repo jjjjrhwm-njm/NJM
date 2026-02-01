@@ -4,7 +4,9 @@ import requests
 
 app = Flask(__name__)
 
-# سحب المفتاح من رندر تلقائياً
+# مخزن مؤقت للذاكرة (سيحفظ المحادثات طالما السيرفر يعمل)
+chat_histories = {}
+
 API_KEY = os.environ.get("MISTRAL_API_KEY")
 
 @app.route('/', methods=['POST'])
@@ -12,47 +14,50 @@ def chat():
     try:
         data = request.get_json()
         user_input = data.get('message', '')
+        # لكي نميز بين الأشخاص، سنستخدم رقم المرسل إذا أرسلته من ماكرودرويد
+        sender_id = data.get('sender', 'default_user') 
 
+        # إذا كان الشخص يكلم البوت لأول مرة، ننشئ له سجل
+        if sender_id not in chat_histories:
+            chat_histories[sender_id] = [
+                {
+                    "role": "system", 
+                    "content": (
+                        "أنت المساعد الشخصي لـ 'راشد'. "
+                        "في أول رسالة فقط: رحب بالشخص بوقار وأخبره أن راشد مشغول وسيوصل الرسالة. "
+                        "في الرسائل التالية: لا تكرر جملة 'راشد مشغول'، بل تفاعل مع ما يقوله الشخص بذكاء وثقل."
+                    )
+                }
+            ]
+
+        # إضافة رسالة المستخدم للذاكرة
+        chat_histories[sender_id].append({"role": "user", "content": user_input})
+
+        # إرسال المحادثة كاملة (الذاكرة) لميسترال
         url = "https://api.mistral.ai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
         
-        # --- التعليمات الكاملة للمساعد الشخصي ---
-        system_prompt = (
-            "أنت المساعد الشخصي لـ 'راشد' (صاحب هذا الجوال وهو رجل أعمال سعودي وقور). "
-            "مهمتك هي إدارة الحوار بذكاء وثقل. اتبع القواعد التالية بدقة:\n"
-            "1. الشخصية: أنت مساعد رسمي، هادئ، وعملي جداً. "
-            "2. أسلوب الرد: إذا بدأ الشخص بالكلام، رحب به باختصار (مثل: حيّاك الله) ثم أخبره أن 'راشد مشغول حالياً'. "
-            "3. المراوغة الذكية: لا تعطِ مواعيد محددة، بل قل: 'أخبرني بموضوعك وسأوصله لراشد في أقرب فرصة'. "
-            "4. اللهجة: استخدم لهجة بيضاء محترمة (سعودية وقورة). "
-            "5. ممنوعات قطعية: يمنع قول 'فهمت' أو 'سأقوم بالرد' أو 'أنا بوت'. "
-            "6. الاختصار: لا تزد عن سطر واحد أو سطرين كحد أقصى. "
-            "7. الالتزام بالوقار: يمنع أي كلام عاطفي أو رومانسي أو غير لائق."
-        )
-
         payload = {
-            "model": "open-mistral-7b", # الموديل الأكرم والمجاني
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_input}
-            ],
-            "temperature": 0.5 # لجعل الردود أكثر اتزاناً وثباتاً
+            "model": "open-mistral-7b",
+            "messages": chat_histories[sender_id],
+            "temperature": 0.7
         }
 
         response = requests.post(url, headers=headers, json=payload)
-        
-        if response.status_code == 200:
-            result = response.json()
-            reply = result['choices'][0]['message']['content']
-            # إرسال النص "صافي" ليعمل مع نسخة ماكرودرويد المجانية للأبد
-            return reply, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-        else:
-            return f"خطأ في الاتصال بالمخ: {response.status_code}", 200, {'Content-Type': 'text/plain; charset=utf-8'}
+        result = response.json()
+        reply = result['choices'][0]['message']['content']
 
-    except Exception as e:
-        return "المعذرة، راشد مشغول الآن. تواصل معه لاحقاً.", 200, {'Content-Type': 'text/plain; charset=utf-8'}
+        # إضافة رد البوت للذاكرة لكي يتذكره في المرة القادمة
+        chat_histories[sender_id].append({"role": "assistant", "content": reply})
+
+        # الحفاظ على آخر 10 رسائل فقط لكي لا يثقل السيرفر
+        if len(chat_histories[sender_id]) > 10:
+            chat_histories[sender_id] = [chat_histories[sender_id][0]] + chat_histories[sender_id][-9:]
+
+        return reply, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+    except:
+        return "المعذرة، راشد مشغول الآن.", 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
