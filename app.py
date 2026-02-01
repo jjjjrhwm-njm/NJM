@@ -1,235 +1,165 @@
 # -*- coding: utf-8 -*-
 """
-نظام المساعد الشخصي المتقدم لـ (راشد)
-إصدار السكرتارية الاحترافية - التوسع الأقصى
-المميزات: ذاكرة دائمة (SQLite)، بروتوكول بشري، تمييز دقيق للمرسلين.
+====================================================================================================
+نظام الإدارة المكتبية الرقمية المتكامل (الإصدار 7.5 - المساعد الملكي الذكي)
+====================================================================================================
+تعديل خاص لراشد: منع التكرار وتعزيز الذاكرة التفاعلية.
 """
 
 import os
-import sqlite3
-import datetime
-import logging
-import requests
+import sys
 import json
 import time
-from flask import Flask, request, jsonify
+import sqlite3
+import logging
+import datetime
+import requests
+from flask import Flask, request, jsonify, make_response
 
-# ==============================================================================
-# 1. إعدادات النظام والبيئة (Configuration)
-# ==============================================================================
 app = Flask(__name__)
 
-# إعداد السجلات لمراقبة الأداء واكتشاف الأخطاء في Render
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s'
+    format='%(asctime)s - [%(levelname)s] - %(message)s',
+    stream=sys.stdout
 )
-logger = logging.getLogger("RashidAssistant")
+logger = logging.getLogger("Rashid_Smart_Assistant")
 
-# مفتاح ميسترال (Mistral API)
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
-MISTRAL_ENDPOINT = "https://api.mistral.ai/v1/chat/completions"
+MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+DATABASE_FILE = "rashid_royal_vault.db"
 
-# مسار قاعدة البيانات لحفظ الذاكرة للأبد
-DATABASE_NAME = "rashid_memory.db"
+# --------------------------------------------------------------------------------------------------
+# [1] إدارة الذاكرة (Memory Engine)
+# --------------------------------------------------------------------------------------------------
 
-# ==============================================================================
-# 2. إدارة قاعدة البيانات والذاكرة الدائمة (Database Layer)
-# ==============================================================================
+class MemoryEngine:
+    @staticmethod
+    def connect():
+        return sqlite3.connect(DATABASE_FILE)
 
-def get_db_connection():
-    """إنشاء اتصال آمن بقاعدة البيانات"""
-    conn = sqlite3.connect(DATABASE_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+    @classmethod
+    def initialize_vault(cls):
+        conn = cls.connect()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS conversation_history (
+                msg_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_token TEXT NOT NULL,
+                actor_role TEXT NOT NULL,
+                message_content TEXT NOT NULL,
+                recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
 
-def init_memory_system():
-    """تهيئة نظام الذاكرة عند تشغيل السيرفر لأول مرة"""
-    logger.info("جاري تهيئة نظام الذاكرة الدائمة...")
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # جدول المحادثات: لحفظ تاريخ كل شخص بشكل منفصل تماماً
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # جدول الملفات التعريفية: لتمييز الأشخاص (VIP، صديق، مجهول)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS profiles (
-            sender_id TEXT PRIMARY KEY,
-            display_name TEXT,
-            category TEXT DEFAULT 'visitor',
-            notes TEXT
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-    logger.info("نظام الذاكرة جاهز بنجاح.")
-
-def save_to_memory(sender_id, role, content):
-    """حفظ الرسالة فوراً في الذاكرة الدائمة"""
-    try:
-        conn = get_db_connection()
+    @classmethod
+    def commit_to_memory(cls, sender, role, text):
+        conn = cls.connect()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO messages (sender_id, role, content) VALUES (?, ?, ?)",
-            (sender_id, role, content)
+            "INSERT INTO conversation_history (sender_token, actor_role, message_content) VALUES (?, ?, ?)",
+            (sender, role, text)
         )
         conn.commit()
         conn.close()
-    except Exception as e:
-        logger.error(f"خطأ في حفظ الذاكرة: {e}")
 
-def fetch_chat_history(sender_id, limit=8):
-    """جلب تاريخ المحادثة الخاص بهذا الشخص فقط لمنع التداخل"""
-    try:
-        conn = get_db_connection()
+    @classmethod
+    def retrieve_context(cls, sender, depth=6):
+        conn = cls.connect()
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        # نجلب آخر رسائل لضمان السياق الذكي
         cursor.execute(
-            "SELECT role, content FROM messages WHERE sender_id = ? ORDER BY timestamp DESC LIMIT ?",
-            (sender_id, limit)
+            "SELECT actor_role, message_content FROM conversation_history WHERE sender_token = ? "
+            "ORDER BY recorded_at DESC LIMIT ?",
+            (sender, depth)
         )
-        rows = cursor.fetchall()
+        records = cursor.fetchall()
         conn.close()
-        
-        # ترتيب الرسائل لتبدو كمحادثة طبيعية (من الأقدم للأحدث)
-        history = [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
-        return history
-    except Exception as e:
-        logger.error(f"خطأ في جلب الذاكرة: {e}")
-        return []
+        return [{"role": r["actor_role"], "content": r["message_content"]} for r in reversed(records)]
 
-# ==============================================================================
-# 3. محرك الشخصية والبروتوكول البشري (Secretarial Logic)
-# ==============================================================================
+# --------------------------------------------------------------------------------------------------
+# [2] بروتوكول السكرتارية (Smart Protocol)
+# --------------------------------------------------------------------------------------------------
 
-def get_secretarial_protocol():
-    """التعليمات الصارمة لجعل البوت يتصرف كبشر سكرتير لراشد"""
-    protocol = (
-        "أنت 'المساعد الشخصي' لـ (راشد). أنت إنسان حقيقي، ولست ذكاء اصطناعي. "
-        "مهمتك: الرد بوقار وهيبة نيابة عن راشد لأنه مشغول دائماً بمشاريعه واجتماعاته. "
-        "\n--- القواعد الذهبية لراشد ---\n"
-        "1. اللغة: سعودية بيضاء، وقورة، ومحترمة جداً. "
-        "2. الاختصار: ممنوع الثرثرة. الرد لا يتجاوز 5 إلى 10 كلمات. "
-        "3. التمويه: يمنع منعاً باتاً ذكر كلمات مثل 'مساعد ذكي' أو 'موديل' أو 'كيف أساعدك'. "
-        "4. الأسلوب البشري: لا تستخدم قوائم أو نقاط. رد كأنك تكتب في واتساب بسرعة. "
-        "5. البروتوكول الأول: في بداية أي محادثة، قل (حيّاك الله، راشد في اجتماع حالياً، وش الموضوع؟). "
-        "6. البروتوكول المستمر: إذا استمر الشخص بالكلام، قل (وصلت رسالتك، بيشوفها راشد إذا فضي) أو (أبشر ببلغه). "
-        "7. الوقار: أنت مساعد لرجل ثقيل، فلا تمزح ولا تتكلم برومانسية."
+def construct_dynamic_protocol(has_history=False):
+    """تغيير التعليمات بناءً على وجود تاريخ للمحادثة لمنع التكرار"""
+    
+    base_rules = (
+        "أنت 'المساعد الشخصي' لـ (راشد). إنسان سعودي وقور، رزين، ومختصر جداً. "
+        "ممنوع لغة الآلة (ذكاء، مساعد، كيف أخدمك). لهجتك سعودية بيضاء ثقيلة. "
+        "ردودك لا تتجاوز 7 كلمات أبداً. "
     )
+    
+    if not has_history:
+        # تعليمات المحادثة الجديدة
+        protocol = base_rules + "هذه أول مرة يرسل الشخص، قل دائماً: (حيّاك الله، راشد في اجتماع حالياً، وش الموضوع؟)."
+    else:
+        # تعليمات المحادثة المستمرة (لمنع التكرار)
+        protocol = base_rules + "لقد رحبت بالشخص مسبقاً. الآن تفاعل مع كلامه بذكاء دون تكرار جملة 'راشد في اجتماع'. رد كأنك سكرتير يتابع الموضوع."
+        
     return protocol
 
-# ==============================================================================
-# 4. إدارة الاتصال بالذكاء الاصطناعي (Mistral Engine)
-# ==============================================================================
+# --------------------------------------------------------------------------------------------------
+# [3] معالجة الطلبات (Core Logic)
+# --------------------------------------------------------------------------------------------------
 
-def generate_human_response(sender_id, user_message):
-    """إرسال المحادثة لميسترال وتوليد رد بشري وقور"""
+def perform_intelligence_request(sender, input_text):
+    context_window = MemoryEngine.retrieve_context(sender)
     
-    # 1. جلب تاريخ المحادثة لهذا الشخص تحديداً
-    history = fetch_chat_history(sender_id)
+    # تحديد البروتوكول المناسب: هل توجد محادثة سابقة؟
+    has_history = len(context_window) > 0
+    system_prompt = construct_dynamic_protocol(has_history)
     
-    # 2. بناء سياق الرسائل
-    messages = [{"role": "system", "content": get_secretarial_protocol()}]
-    for msg in history:
-        messages.append(msg)
-    messages.append({"role": "user", "content": user_message})
+    messages_payload = [
+        {"role": "system", "content": system_prompt}
+    ] + context_window + [
+        {"role": "user", "content": input_text}
+    ]
     
-    # 3. إعداد البيانات لميسترال
-    payload = {
+    api_request_data = {
         "model": "open-mistral-7b",
-        "messages": messages,
-        "temperature": 0.4, # لجعل الرد رزيناً وغير مهذار
-        "max_tokens": 50,
-        "top_p": 0.9
+        "messages": messages_payload,
+        "temperature": 0.3, # رزانة عالية لمنع التكرار
+        "max_tokens": 50
     }
     
-    headers = {
+    api_headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
         "Content-Type": "application/json"
     }
 
     try:
-        response = requests.post(MISTRAL_ENDPOINT, json=payload, headers=headers, timeout=15)
+        response = requests.post(MISTRAL_API_URL, json=api_request_data, headers=api_headers, timeout=12)
         if response.status_code == 200:
-            result = response.json()
-            return result['choices'][0]['message']['content'].strip()
-        else:
-            logger.error(f"API Error: {response.status_code} - {response.text}")
-            return "حيّاك الله، راشد مشغول الآن."
-    except Exception as e:
-        logger.error(f"Request Exception: {e}")
-        return "المعذرة، راشد مشغول."
-
-# ==============================================================================
-# 5. الواجهة البرمجية (Flask Routes)
-# ==============================================================================
+            return response.json()['choices'][0]['message']['content'].strip()
+        return "أبشر ببلغه إذا خلص راشد."
+    except:
+        return "راشد مشغول حالياً."
 
 @app.route('/', methods=['POST'])
-def rashid_assistant_gateway():
-    """البوابة الرئيسية لاستقبال رسائل واتساب"""
-    start_time = time.time()
-    
+def gateway_entry():
     try:
-        # استلام البيانات من MacroDroid
-        data = request.get_json()
-        if not data:
-            return "No JSON provided", 400
+        raw_payload = request.get_json()
+        msg_body = raw_payload.get('message', '').strip()
+        sender_identity = raw_payload.get('sender', 'guest')
 
-        user_input = data.get('message', '').strip()
-        # هنا الحل الجذري لمشكلة التداخل: نأخذ المعرف الفريد للمرسل
-        sender_id = data.get('sender', 'unknown_visitor')
+        if not msg_body: return "Empty", 200
 
-        if not user_input:
-            return "Empty message received", 200
+        # [أ] حفظ رسالة المستخدم
+        MemoryEngine.commit_to_memory(sender_identity, "user", msg_body)
 
-        logger.info(f"رسالة جديدة من [{sender_id}]: {user_input}")
+        # [ب] جلب الرد
+        humanized_reply = perform_intelligence_request(sender_identity, msg_body)
 
-        # 1. حفظ رسالة المستخدم في الذاكرة
-        save_to_memory(sender_id, "user", user_input)
+        # [ج] حفظ رد المساعد
+        MemoryEngine.commit_to_memory(sender_identity, "assistant", humanized_reply)
 
-        # 2. توليد الرد من خلال بروتوكول السكرتارية
-        ai_reply = generate_human_response(sender_id, user_input)
-
-        # 3. حفظ رد المساعد في الذاكرة
-        save_to_memory(sender_id, "assistant", ai_reply)
-
-        process_time = time.time() - start_time
-        logger.info(f"تم الرد في {process_time:.2f} ثانية.")
-
-        # إرسال النص الصافي تماماً ليعمل مع ماكرودرويد المجاني
-        return ai_reply, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-    except Exception as e:
-        logger.error(f"خطأ كارثي في السيرفر: {e}")
-        return "راشد مشغول حالياً.", 200
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """للتأكد من أن السيرفر يعمل بكامل طاقته"""
-    return jsonify({
-        "status": "online",
-        "owner": "Rashid",
-        "system": "Advanced Secretary v5.0",
-        "memory_status": "Active (SQLite)"
-    }), 200
-
-# ==============================================================================
-# 6. التشغيل (Main Entry Point)
-# ==============================================================================
+        return humanized_reply, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    except:
+        return "المعذرة، راشد مشغول.", 200
 
 if __name__ == '__main__':
-    # تهيئة قاعدة البيانات عند أول تشغيل
-    init_memory_system()
-    
-    # التشغيل على بورت 10000 المتوافق مع Render
-    app.run(host='0.0.0.0', port=10000, debug=False)
+    MemoryEngine.initialize_vault()
+    app.run(host='0.0.0.0', port=10000)
