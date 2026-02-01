@@ -1,50 +1,47 @@
 import os
-import requests
 from flask import Flask, request
+import requests
 
 app = Flask(__name__)
 
-# ضع مفتاح API الخاص بـ X.ai (Grok) هنا أو في إعدادات Render
-API_KEY = os.environ.get("XAI_API_KEY", "ضع_مفتاح_API_هنا")
+# نستخدم نفس المفتاح الذي وضعته أنت مسبقاً في إعدادات رندر
+GROK_API_KEY = os.getenv("GROK_API_KEY")
 
 @app.route('/', methods=['POST'])
 def chat():
     try:
         data = request.json
-        user_message = data.get("message", "")
-
-        # إعدادات الشخصية (ثقيل، عاقل، مختصر، ومحترم)
-        system_prompt = (
-            "أنت مساعد ذكي بشخصية وقورة، ثقيلة، وعاقلة. "
-            "ردودك يجب أن تكون مختصرة جداً ومباشرة. "
-            "يمنع منعاً باتاً استخدام أي كلمات رومانسية، عاطفية، أو مخلة بالآداب. "
-            "إذا كانت الرسالة غير لائقة، اعتذر بوقار وانتهى."
-        )
+        user_msg = data.get('message', '')
 
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {API_KEY}"
+            "Authorization": f"Bearer {GROK_API_KEY}",
+            "Content-Type": "application/json"
         }
 
+        # هنا ضبطنا الشخصية: ثقيل، عاقل، مختصر، ومحترم جداً
         payload = {
-            "model": "grok-beta", # أو الموديل الذي تستخدمه
+            "model": "grok-beta",
             "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
+                {
+                    "role": "system", 
+                    "content": "أنت رجل سعودي وقور، عاقل وثقيل جداً. ردودك مختصرة لأقصى حد ومباشرة. يمنع منعاً باتاً أي كلام رومانسي أو عاطفي أو مخل. إذا سألك أحد عن شيء غير لائق، رد بكلمة واحدة: اعتذر."
+                },
+                {"role": "user", "content": user_msg}
             ]
         }
 
-        response = requests.post("https://api.x.ai/v1/chat/completions", headers=headers, json=payload)
-        response_data = response.json()
+        response = requests.post("https://api.x.ai/v1/chat/completions", json=payload, headers=headers)
+        result = response.json()
         
-        # استخراج النص فقط
-        ai_reply = response_data['choices'][0]['message']['content']
+        # استخراج النص الصافي من رد غروك
+        reply_text = result['choices'][0]['message']['content']
+        
+        # التعديل الأهم: نرسل النص "خام" بدون JSON عشان يوصل للواتساب عربي واضح فوراً
+        return reply_text, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    
+    except:
+        return "عذراً، حصل خطأ.", 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
-        # إرسال الرد كنص عادي (Plain Text) ليفهمه الماكرو المجاني فوراً
-        return ai_reply, 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-    except Exception as e:
-        return "حصل خطأ بسيط، أعد المحاولة.", 200, {'Content-Type': 'text/plain; charset=utf-8'}
-
-if __name__ == '__main__':
+if __name__ == "__main__":
+    # رندر يستخدم المنفذ 10000 بشكل افتراضي
     app.run(host='0.0.0.0', port=10000)
