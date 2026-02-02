@@ -1,15 +1,13 @@
 import os
 import json
-import datetime
 import requests
-import time
 import firebase_admin
 from firebase_admin import credentials, db
 from flask import Flask, request
 
 app = Flask(__name__)
 
-# --- [1] إعدادات الذاكرة الحديدية (Firebase) ---
+# --- [1] الربط بمخزن فيرباس (Firebase) بدون تعقيد التاريخ ---
 try:
     config_raw = os.environ.get("FIREBASE_CONFIG")
     db_url = os.environ.get("FIREBASE_DB_URL")
@@ -22,64 +20,56 @@ except Exception: pass
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# --- [2] وظيفة إدارة الذاكرة وحفظ الهوية ---
-def manage_memory(sender_id, role=None, content=None):
+# --- [2] وظائف الذاكرة (تعتمد على ترتيب الرسائل التلقائي وليس التاريخ) ---
+def get_history(sender):
     try:
-        ref = db.reference(f'chats/{sender_id}')
-        if content:
-            ref.child('messages').push({
-                'role': role, 'content': content, 
-                'ts': datetime.datetime.now().isoformat()
-            })
-        
-        # جلب آخر 6 رسائل لضمان بقاء السياق (رابعاً: حفظ الموضوع)
-        snapshot = ref.child('messages').order_by_child('ts').limit_to_last(6).get()
+        ref = db.reference(f'chats/{sender}/messages')
+        snapshot = ref.limit_to_last(6).get() # جلب آخر 6 رسائل فقط
         if not snapshot: return []
+        # ترتيب الرسائل يتم تلقائياً بناءً على "مفتاح الدفع" في فيرباس
         return [{"role": snapshot[k]['role'], "content": snapshot[k]['content']} for k in sorted(snapshot.keys())]
     except: return []
 
-# --- [3] المعالجة المركزية (الحماية + الارتجال) ---
-@app.route('/', methods=['POST'])
-def handle_bot():
+def save_to_cloud(sender, role, text):
     try:
-        # ثانياً: مهلة تفكير (ثانية واحدة) لضمان عدم تداخل الرسائل
-        time.sleep(1)
-        
+        # الحفظ هنا بدون حقل 'ts' لإزالة قيد التاريخ تماماً
+        db.reference(f'chats/{sender}/messages').push({'role': role, 'content': text})
+    except: pass
+
+# --- [3] معالجة الرسائل بالوصايا الخمس الصارمة ---
+@app.route('/', methods=['POST'])
+def royal_assistant():
+    try:
         data = request.get_json()
-        msg_body = data.get('message', '').strip()
-        sender_id = data.get('sender', 'unknown') # رابعاً: هوية المرسل ثابتة
+        user_msg = data.get('message', '').strip()
+        sender = data.get('sender', 'unknown')
+        if not user_msg: return "OK", 200
 
-        if not msg_body: return "OK", 200
-
-        # أولاً: حماية من التكرار (منع معالجة نفس الرسالة مرتين في أقل من ثانيتين)
-        ref_status = db.reference(f'chats/{sender_id}/status')
-        last_msg_ts = ref_status.child('last_processed_ts').get()
-        now_ts = time.time()
+        # فحص "قفل الترحيب" بدلاً من فحص التاريخ
+        ref_user = db.reference(f'chats/{sender}')
+        is_greeted = ref_user.child('greeted').get()
         
-        if last_msg_ts and (now_ts - last_msg_ts < 2):
-            return "OK", 200 # تجاهل الإشعار المكرر
+        history = get_history(sender)
 
-        # فحص هل تم الترحيب مسبقاً (خارج التاريخ لضمان الدقة)
-        is_greeted = ref_status.child('is_greeted').get()
-        history = manage_memory(sender_id)
+        # الوصايا الخمس (الدستور الرسمي للمساعد)
+        system_rules = (
+            "1. أنت مساعد وسكرتير راشد (نجم الإبداع) في نفس الوقت. "
+            "2. ردودك مختصره جداً وبدون ذكاء زائد. "
+            "3. يمنع تماماً أي كلام رومانسي أو مخل بالآداب. "
+            "4. رد على قدر السؤال الموجه لك فقط. "
+            "5. إجاباتك فقط في إطار عملك كسكرتير لراشد."
+        )
 
-        # ثالثاً: الترحيب الارتجالي بناءً على أول رسالة
+        # منطق الترحيب الارتجالي (يحدث مرة واحدة فقط في العمر لكل رقم)
         if not is_greeted:
-            instruction = (
-                "هذه أول رسالة للمرسل. ارتجل ترحيباً وقوراً وبشرياً جداً "
-                f"بناءً على أسلوب كلامه: '{msg_body}'. لا تكرر جمل معلبة."
-            )
+            instruction = f"{system_rules} القاعدة: هذه أول مرة تراه، ارتجل ترحيباً وقوراً ومختصراً جداً."
         else:
-            instruction = "هذا حوار مستمر. ممنوع الترحيب نهائياً. ادخل في الموضوع بذكاء."
+            instruction = f"{system_rules} القاعدة: ممنوع تكرار الترحيب نهائياً، ادخل في الموضوع بوقار."
 
-        # إرسال الطلب لـ Groq
         payload = {
             "model": "llama-3.3-70b-versatile",
-            "messages": [
-                {"role": "system", "content": "أنت مساعد راشد (نجم الإبداع). سكرتير سعودي محنك، ردودك وقورة وأقل من 8 كلمات."},
-                {"role": "system", "content": instruction}
-            ] + history + [{"role": "user", "content": msg_body}],
-            "temperature": 0.7 
+            "messages": [{"role": "system", "content": instruction}] + history + [{"role": "user", "content": user_msg}],
+            "temperature": 0.5 # تقليل العفوية لضمان الالتزام بالرد المختصر
         }
 
         res = requests.post("https://api.groq.com/openai/v1/chat/completions",
@@ -87,13 +77,11 @@ def handle_bot():
         
         reply = res.json()['choices'][0]['message']['content']
 
-        # حفظ الرد وتحديث الحالة والوقت (تفعيل الحماية)
-        manage_memory(sender_id, "user", msg_body)
-        manage_memory(sender_id, "assistant", reply)
-        ref_status.update({
-            'is_greeted': True, 
-            'last_processed_ts': now_ts 
-        })
+        # حفظ الرسالة وتفعيل "قفل الترحيب" للأبد لهذا الرقم
+        save_to_cloud(sender, "user", user_msg)
+        save_to_cloud(sender, "assistant", reply)
+        if not is_greeted:
+            ref_user.child('greeted').set(True)
 
         return reply, 200, {'Content-Type': 'text/plain; charset=utf-8'}
     except:
